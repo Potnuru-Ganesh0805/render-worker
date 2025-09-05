@@ -1,13 +1,14 @@
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import redis
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+# Initialize Flask app and specify the directory for static files
+app = Flask(__name__, static_folder='../frontend', static_url_path='')
+CORS(app)
 
-# Connect to the Redis instance using the URL provided by Render
+# Attempt to connect to the Redis instance using the URL from Render's environment variable
 try:
     redis_client = redis.from_url(os.environ.get("REDIS_URL"), decode_responses=True)
     redis_client.ping()
@@ -15,6 +16,16 @@ try:
 except redis.exceptions.ConnectionError as e:
     print(f"Error connecting to Redis: {e}")
     redis_client = None
+
+# Route to serve the main HTML file at the root URL
+@app.route('/')
+def serve_index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+# Route to serve other static files from the frontend directory
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return send_from_directory(app.static_folder, filename)
 
 @app.route('/predict', methods=['POST'])
 def predict():
