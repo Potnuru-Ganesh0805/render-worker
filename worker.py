@@ -6,45 +6,72 @@ import redis
 from ultralytics import YOLO
 from PIL import Image
 from io import BytesIO
+import torch
+import torch.quantization
 
-# Connect to Redis using the URL from your Render environment variable
-redis_client = redis.from_url(os.environ.get("REDIS_URL"))
+# Connect to the Redis instance
+try:
+    redis_client = redis.from_url(os.environ.get("REDIS_URL"), decode_responses=True)
+    redis_client.ping()
+    print("Successfully connected to Redis.")
+except redis.exceptions.ConnectionError as e:
+    print(f"Error connecting to Redis: {e}")
+    redis_client = None
 
-# Load the YOLOv8 model once
-model = YOLO("yolov8n.pt") # You can also use your custom model file
+# Use the GPU if available, otherwise use CPU
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# The detection classes you are interested in
-target_classes = ['person', 'light_on', 'light_off']
+# Load the model and apply quantization for a smaller memory footprint
+print("Loading FP32 model...")
+# It is recommended to download your model weights and put it in the same directory
+# so Render's build can find it.
+try:
+    model = YOLO("yolov8n.pt").to(device)
+    print("Applying dynamic quantization to reduce memory usage.")
+    quantized_model = torch.quantization.quantize_dynamic(
+        model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
+    )
+    model = quantized_model
+    print("Model loaded and quantized.")
+except Exception as e:
+    print(f"Error loading or quantizing model: {e}")
+    model = None
+
+# Define the classes to detect
+TARGET_CLASSES = ['person', 'light_on', 'light_off']
 
 def process_job(job_data):
+    if model is None:
+        print("Model is not loaded. Skipping job.")
+        return
+
     try:
         image_url = job_data['image_url']
         webhook_url = job_data['webhook_url']
 
         print(f"Processing job for image: {image_url}")
 
-        # Download the image
+        # Download the image from the URL
         response = requests.get(image_url)
         response.raise_for_status()
         image = Image.open(BytesIO(response.content)).convert("RGB")
 
-        # Run YOLOv8 prediction
+        # Run YOLOv8 prediction on the image
         results = model.predict(source=image, conf=0.25)
-        
-        # Extract and count detections for the target classes
-        detections = {cls: {'count': 0, 'locations': []} for cls in target_classes}
+
+        # Extract detections for the target classes
+        detections = {cls: {'count': 0, 'locations': []} for cls in TARGET_CLASSES}
         for result in results:
             for box in result.boxes:
-                # Get class name and bounding box coordinates
                 class_id = int(box.cls)
                 class_name = model.names[class_id]
                 
-                if class_name in target_classes:
+                if class_name in TARGET_CLASSES:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     detections[class_name]['count'] += 1
                     detections[class_name]['locations'].append([x1, y1, x2, y2])
 
-        # Prepare and send the response to the webhook
+        # Prepare and send the final response to the webhook
         payload = {
             "status": "completed",
             "image_url": image_url,
@@ -56,16 +83,20 @@ def process_job(job_data):
 
     except Exception as e:
         print(f"Error processing job: {e}")
-        # Optionally, send an error response to the webhook
+        # Send an error payload to the webhook
         requests.post(webhook_url, json={"status": "error", "message": str(e)})
 
 if __name__ == "__main__":
-    print("Worker started. Listening for jobs...")
-    while True:
-        # Block and wait for a new job from the queue
-        job = redis_client.brpop('detection_jobs', timeout=10)
-        if job:
-            job_data = json.loads(job[1])
-            process_job(job_data)
-        else:
-            time.sleep(1) # Sleep to prevent excessive polling if the queue is empty
+    if redis_client is None:
+        print("Worker cannot start without a Redis connection.")
+    else:
+        print("Worker started. Listening for jobs...")
+        while True:
+            # brpop is a blocking pop, which waits for a job to appear in the queue
+            job = redis_client.brpop('detection_jobs', timeout=10)
+            if job:
+                job_data = json.loads(job[1])
+                process_job(job_data)
+            else:
+                # Sleep briefly if the queue is empty
+                time.sleep(1)
