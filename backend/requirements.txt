@@ -1,0 +1,7 @@
+flask
+gunicorn
+flask_cors
+redis
+requests
+ultralytics
+torch
