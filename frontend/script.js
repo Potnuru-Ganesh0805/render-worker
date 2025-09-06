@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const imageInput = document.getElementById('imageInput');
     const imagePreview = document.getElementById('imagePreview');
     const detectButton = document.getElementById('detectButton');
+    const webhookUrlInput = document.getElementById('webhookUrlInput'); // Get the new input element
     const resultDiv = document.getElementById('result');
 
     imageInput.addEventListener('change', function(event) {
@@ -21,30 +22,29 @@ document.addEventListener('DOMContentLoaded', () => {
     detectButton.addEventListener('click', async () => {
         resultDiv.textContent = 'Processing... Please wait.';
         
-        // This is your deployed Render web service URL
-        const apiEndpoint = 'https://YOUR_RENDER_SERVICE_URL.onrender.com/predict';
-
-        // Use a temporary webhook URL to see the results.
-        const webhookUrl = 'https://your-webhook-test-url.com/receive'; 
+        const apiEndpoint = 'https://luminous-backend-nc5e.onrender.com/predict';
         
-        const imageUrl = imagePreview.src;
+        const webhookUrl = webhookUrlInput.value; // Get the URL from the input field
+        const file = imageInput.files[0];
+
+        if (!webhookUrl || !file) {
+            resultDiv.textContent = 'Please provide both an image and a webhook URL.';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('webhook_url', webhookUrl); // Send the URL with the request
 
         try {
             const response = await fetch(apiEndpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    image_url: imageUrl,
-                    webhook_url: webhookUrl
-                })
+                body: formData
             });
 
             if (response.ok) {
                 const data = await response.json();
                 resultDiv.textContent = `Success! Your request has been queued.`;
-                // The actual results will be sent to your webhook URL
             } else {
                 resultDiv.textContent = 'Failed to submit the job.';
             }
