@@ -24,7 +24,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Load the model and apply quantization
 print("Loading model...")
 try:
-    model = YOLO("yolov8n.pt").to(device)
+    model = YOLO("model5.pt").to(device)
     print("Applying dynamic quantization to reduce memory usage.")
     quantized_model = torch.quantization.quantize_dynamic(
         model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
